@@ -8,3 +8,7 @@ data/
 .DS_Store
 Thumbs.db
 .vscode/
+# exclude pushed-by-mistake files
+N05-20_GML.zip
+P11-22_GML.zip
+prep_transport_poi.py
