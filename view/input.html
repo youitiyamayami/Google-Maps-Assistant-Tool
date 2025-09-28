@@ -1,0 +1,28 @@
+<!DOCTYPE HTML>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="style.css">
+  <title>ルート検索（出発地 / 到着地）</title>
+</head>
+<body>
+<h1>入力画面</h1>
+<div id="Departure">
+    <h2>出発地を入力してください</h2>
+    <form id="input">
+        <input type="text" name="出発地">
+        <button type="submit">検索</button>
+    </form>
+</div>
+<div id="Arrive">
+    <h2>到着地を入力してください</h2>
+    <form id="output">
+        <input type="text" name="到着地">
+        <button type="submit">検索</button>
+    </form>
+</div>
+
+<!-- ページ遷移なしのポップアップ候補表示＆/root/data 検索API連携 -->
+<script src="app.js" defer></script>
+</body>
+</html>

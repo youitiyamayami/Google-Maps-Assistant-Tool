@@ -1,0 +1,103 @@
+/* style.css
+ * 目的:
+ *   - 既存の配置（#Departure / #Arrive）を維持。
+ *   - Gridで見出しとフォームを整列、値はCSS変数で微調整可能。
+ */
+
+:root{
+  --top-dep: 5%;
+  --top-arr: 15%;
+  --row-left: 5%;
+  --row-width: 90%;
+  --w-input-col: 65%;
+  --w-button-col: 20%;
+  --h-control: 56px;
+  --gap-inline: 12px;
+  --h2-bottom: 8px;
+  --radius: 8px;
+  --border: 1px solid #ccc;
+  --bg-button: #f3f3f3;
+  --page-bg: #f4f4f4;
+  --board-bg: #ffffff;
+  --shadow: 0 10px 30px rgba(0,0,0,.08);
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans JP', sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+html {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: var(--page-bg);
+}
+body{
+  width: 1080px;
+  height: 1920px;
+  position: relative;
+  background: var(--board-bg);
+  border: var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  font-family: var(--font);
+  overflow: hidden;
+}
+
+#Departure, #Arrive{
+  position: absolute;
+  left: var(--row-left);
+  width: var(--row-width);
+  display: grid;
+  grid-template-columns: var(--w-input-col) var(--w-button-col);
+  grid-auto-rows: auto;
+  column-gap: var(--gap-inline);
+}
+
+#Departure{ top: var(--top-dep); }
+#Arrive{    top: var(--top-arr); }
+
+#Departure > h2,
+#Arrive > h2{
+  grid-column: 1 / -1;
+  margin: 0 0 var(--h2-bottom);
+  font-size: 18px;
+}
+
+#Departure > form,
+#Arrive    > form{
+  grid-column: 1 / -1;
+  margin: 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: var(--w-input-col) var(--w-button-col);
+  column-gap: var(--gap-inline);
+}
+
+#Departure form > input[type="text"],
+#Arrive    form > input[type="text"]{
+  grid-column: 1;
+  width: 100%;
+  height: var(--h-control);
+  border: var(--border);
+  border-radius: var(--radius);
+  padding: 0 12px;
+  font-size: 16px;
+  line-height: 1.2;
+  outline: none;
+}
+
+#Departure form > button,
+#Arrive    form > button{
+  grid-column: 2;
+  width: 100%;
+  height: var(--h-control);
+  border: var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-button);
+  font-size: 16px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+}

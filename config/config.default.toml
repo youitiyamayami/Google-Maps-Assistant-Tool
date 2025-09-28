@@ -1,0 +1,21 @@
+[app]
+language     = "ja"
+region       = "JP"
+headless     = false         # 開発時はfalse、運用時はtrueに
+timeout_sec  = 30
+encoding     = "utf-8"
+
+# ランダムスリープ（ミリ秒）
+random_sleep_ms = [200, 600]
+
+[ui]
+# 区間時間の目安（分）…GUIの「小/中/大」で閾値を切り替え
+#   小: S<=10, M<=20
+#   中: S<=15, M<=30
+#   大: S<=20, M<=40
+bucket_small_s = 10
+bucket_small_m = 20
+bucket_mid_s   = 15
+bucket_mid_m   = 30
+bucket_large_s = 20
+bucket_large_m = 40
