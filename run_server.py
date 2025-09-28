@@ -1,27 +1,29 @@
-# run_server.py
-# 目的:
-#   - view/ 配下を静的配信し、/ で input.html を返すローカルWebサーバ。
-#   - /api/search で「/data 配下のみ」を再帰検索（大量検索向けにディレクトリ検索が既定）。
-#   - /api/reindex で /data のファイル一覧キャッシュを再構築。
-#   - 必要なら ZIP 検索も可能だが、/data 配下のZIPのみ対象（mode=zip|both）。
-#
-# 変更点（今回の要望対応）:
-#   - 検索範囲を /data 配下のみにハードリミット。
-#   - ZIP検索の探索ディレクトリも /data のみに限定。
-#
-# 使い方:
-#   python run_server.py
-#   → http://127.0.0.1:8000/ を開く
-#   → 入力欄で検索（既定: mode=dir）。/data 以下が対象。
-#
-# API:
-#   GET /api/search?q=KEYWORD[&mode=dir|zip|both][&scope=filename|content|both][&limit=200]
-#   GET /api/reindex
-#
-# 注意:
-#   - 想定はローカル用途。/data が存在しない場合はインデックス件数0になり、検索結果は空です。
-#   - /data に解凍済みの .xml / .gml / .json / .csv / .txt などを配置してください。
-#   - ZIPも使う場合は /data 配下に ZIP を置き、mode=both|zip で検索可能です。
+# -*- coding: utf-8 -*-
+"""
+run_server.py
+目的:
+  - view/ 配下の静的ファイル（input.html, app.js, style.css など）を配信するローカルWebサーバ。
+  - /api/search で「ローカルデータ検索」を提供する。検索対象は以下の優先順位で決定:
+        1) 環境変数 DATA_ROOT のパス（指定があれば最優先）
+        2) <プロジェクト>/data  （これが既定・推奨）
+        3) /data                （最後のフォールバック）
+  - /api/reindex でディレクトリインデックスを再構築。
+  - GET/POST/OPTIONS を実装（501対策）。CORSヘッダー付与。
+
+できること（概要）:
+  - http://127.0.0.1:<port>/ で view/input.html を返す（/ → input.html）。
+  - GET /api/search?q=キーワード[&mode=dir|zip|both][&scope=filename|content|both][&limit=200][&force=true]
+  - POST /api/search （JSON もしくは x-www-form-urlencoded で上記パラメータ）
+  - GET/POST /api/reindex で <検索ルート> のファイル一覧キャッシュを作り直す。
+  - いずれの検索モードでも、検索対象はあくまで「データルート配下」に限定される。
+
+依存:
+  - Python 3.8+（標準ライブラリのみ）
+
+起動例:
+  > python run_server.py
+  （初期起動時に <プロジェクト>/data が無ければ空フォルダを作成）
+"""
 
 from __future__ import annotations
 
@@ -32,61 +34,81 @@ import json
 import time
 import glob
 import contextlib
+import zipfile
+import webbrowser
 from functools import partial
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+from typing import Iterable, Dict, Any, List
 from urllib.parse import urlparse, parse_qs, unquote
-import webbrowser
-import zipfile
-from typing import Iterable, List, Dict, Any
 
 # =========================
-# 基本パラメータ（要件に合わせ固定）
+# 設定値・定数
 # =========================
 
-HOST: str = "127.0.0.1"                            # サーバホスト
-PORT_CANDIDATES: list[int] = list(range(8000, 8011))  # 空きポートを探索
+HOST: str = "127.0.0.1"                         # バインド先
+PORT_CANDIDATES: List[int] = list(range(8000, 8011))  # 空きを順に試すポート
 
+# パス周り
 BASE_DIR: str = os.path.abspath(os.path.dirname(__file__))  # プロジェクトルート
-VIEW_DIR: str = os.path.join(BASE_DIR, "view")              # 静的ファイル配置
+VIEW_DIR: str = os.path.join(BASE_DIR, "view")              # 静的配信ルート
+PROJ_DATA_ROOT: str = os.path.join(BASE_DIR, "data")        # 既定: <プロジェクト>/data
+ENV_DATA_ROOT: str = os.environ.get("DATA_ROOT", "")        # ユーザーが上書きしたい時に使用
+ABS_DATA_ROOT: str = "/data"                                # 最後のフォールバック
 
-# ★ 検索ルートを /data のみに限定（存在しなければ後述のインデックスは空）
-DIR_SEARCH_ROOTS_CANDIDATES: list[str] = [
-    "/data",
-]
-
-# ★ ZIP検索も /data のみ
-ZIP_DIR_CANDIDATES: list[str] = [
-    "/data",
-]
-# 参考: よく使うZIP名が /data にある場合に優先チェック（無ければスキップ）
-PREFERRED_ZIPS: list[str] = [
-    "/data/N05-20_GML.zip",
-    "/data/P11-22_GML.zip",
-]
-
-# テキスト拡張子（対象ファイル種別のホワイトリスト）
+# 検索対象拡張子（テキスト系）
 TEXT_EXT_WHITELIST: set[str] = {
-    ".txt", ".csv", ".tsv", ".json", ".xml", ".gml", ".html", ".htm", ".md"
+    ".txt", ".csv", ".tsv", ".json", ".xml", ".gml", ".html", ".htm", ".md", ".geojson"
 }
 
-# 内容読み取り上限（過負荷防止）
-MAX_BYTES_PER_FILE: int = 2 * 1024 * 1024  # 2MB
-# 返却件数上限
-MAX_HITS_RETURNED: int = 200
-# 総スキャン安全弁（極端な巨大ツリー対策）
-MAX_FILES_SCANNED: int = 200000
+# 制限（負荷＆安全弁）
+MAX_BYTES_PER_FILE: int = 2 * 1024 * 1024   # 1ファイルの読み取り上限（2MB）
+MAX_HITS_RETURNED: int = 200                # 返却件数上限
+MAX_FILES_SCANNED: int = 200000             # 総スキャン数の安全上限
+INDEX_REFRESH_SEC: int = 60                 # ディレクトリ一覧キャッシュの再構築間隔（秒）
 
-# デコード候補（上から順に試行）
+# 文字コード候補（順に試す）
 DECODE_CANDIDATES: list[str] = ["utf-8", "cp932", "shift_jis", "euc-jp", "latin1"]
 
-# ディレクトリインデックスの自動更新間隔（秒）
-INDEX_REFRESH_SEC: int = 60
+# =========================
+# 検索ルートの候補と決定
+# =========================
 
-# ========== グローバルキャッシュ ==========
-_DIR_FILE_LIST: list[str] = []     # /data 配下の対象ファイル一覧
+def _candidate_data_roots() -> list[str]:
+    """
+    データルート候補を優先順位順で返す。
+      1) DATA_ROOT（環境変数）
+      2) <プロジェクト>/data
+      3) /data
+    """
+    cands: list[str] = []
+    if ENV_DATA_ROOT:
+        cands.append(ENV_DATA_ROOT)
+    cands.append(PROJ_DATA_ROOT)
+    cands.append(ABS_DATA_ROOT)
+
+    # 正規化＆重複除去
+    out: list[str] = []
+    seen: set[str] = set()
+    for p in cands:
+        if not p:
+            continue
+        ap = os.path.abspath(p)
+        if ap not in seen:
+            seen.add(ap)
+            out.append(ap)
+    return out
+
+def _zip_root_candidates() -> list[str]:
+    """ZIP探索のためのルート候補（データルートと同一）"""
+    return _candidate_data_roots()
+
+# =========================
+# グローバルキャッシュ
+# =========================
+
+_DIR_FILE_LIST: list[str] = []     # 走査対象ファイル一覧（テキスト系のみ）
 _DIR_FILE_LIST_STAMP: float = 0.0  # 最終更新時刻
-_DIR_ROOTS_ACTUAL: list[str] = []  # 実在した検索ルート（相対パス計算用）
-
+_DIR_ROOTS_ACTUAL: list[str] = []  # 実在が確認できたルート
 
 # =========================
 # 低レベルユーティリティ
@@ -101,44 +123,32 @@ def _try_decode(b: bytes) -> str:
             continue
     return b.decode("latin1", errors="ignore")
 
-
 def _is_text_ext(path: str) -> bool:
-    """拡張子がテキスト許容か判定。"""
+    """テキストとして扱う拡張子か判定。"""
     _, ext = os.path.splitext(path)
     return ext.lower() in TEXT_EXT_WHITELIST
 
-
 def _normalize_relpath(abs_path: str) -> str:
     """
-    表示用の相対パスを、実在する検索ルートからの相対に正規化。
-    どれにも当てはまらない場合は /data からの相対（存在しない場合はそのまま）。
+    表示用に「データルートからの相対パス」っぽく見せる。
+    複数ルートのどれにも一致しなければ絶対パスを / 区切りで返す。
     """
     ap = os.path.abspath(abs_path)
     for root in _DIR_ROOTS_ACTUAL:
         root_abs = os.path.abspath(root)
-        if ap.startswith(root_abs + os.sep) or ap == root_abs:
+        if ap == root_abs or ap.startswith(root_abs + os.sep):
             return os.path.relpath(ap, start=root_abs).replace("\\", "/")
-    try:
-        return os.path.relpath(ap, start=os.path.abspath("/data")).replace("\\", "/")
-    except Exception:
-        return abs_path.replace("\\", "/")
-
+    return ap.replace("\\", "/")
 
 # =========================
-# ZIP 検索ユーティリティ（/dataのみ）
+# ZIP検索（任意。/data系のみ）
 # =========================
 
 def _discover_zip_paths() -> list[str]:
-    """/data 配下のZIPを列挙（優先ファイル → ディレクトリの順）。"""
-    seen: set[str] = set()
+    """データルート候補配下の *.zip を列挙。"""
     paths: list[str] = []
-
-    for p in PREFERRED_ZIPS:
-        if os.path.isfile(p) and p not in seen:
-            seen.add(p)
-            paths.append(p)
-
-    for d in ZIP_DIR_CANDIDATES:
+    seen: set[str] = set()
+    for d in _zip_root_candidates():
         if not os.path.isdir(d):
             continue
         for p in sorted(glob.glob(os.path.join(d, "*.zip"))):
@@ -147,11 +157,10 @@ def _discover_zip_paths() -> list[str]:
                 paths.append(p)
     return paths
 
-
 def _search_in_zip(zip_path: str, query_lower: str, scope: str, limit_hits: int) -> Iterable[dict[str, Any]]:
     """
-    単一ZIP内の検索（/data 限定）。ファイル名一致 / 内容一致（テキストのみ）。
-    scope: "filename" | "content" | "both"
+    1つのZIPアーカイブ内で検索。
+      - scope: "filename" | "content" | "both"
     """
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
@@ -173,14 +182,13 @@ def _search_in_zip(zip_path: str, query_lower: str, scope: str, limit_hits: int)
                     }
                     continue
 
-                # 内容一致（テキスト拡張子のみ）
+                # 内容一致（テキスト拡張子のみ読み取り）
                 if scope in ("content", "both") and _is_text_ext(entry_name):
                     try:
                         with zf.open(info, "r") as fp:
                             b = fp.read(MAX_BYTES_PER_FILE)
                     except Exception:
                         continue
-
                     text = _try_decode(b)
                     idx = text.lower().find(query_lower)
                     if idx >= 0:
@@ -199,62 +207,64 @@ def _search_in_zip(zip_path: str, query_lower: str, scope: str, limit_hits: int)
     except Exception as e:
         sys.stderr.write(f"[SEARCH][ZIP] open error: {zip_path}: {e}\n")
 
-
 # =========================
-# ディレクトリ検索ユーティリティ（/dataのみ）
+# ディレクトリ検索
 # =========================
 
 def _refresh_dir_roots() -> list[str]:
-    """存在する検索ルート(/data)のみ抽出して保持。"""
+    """存在するデータルートのみ抽出して保持。"""
     global _DIR_ROOTS_ACTUAL
     roots: list[str] = []
-    for d in DIR_SEARCH_ROOTS_CANDIDATES:
+    for d in _candidate_data_roots():
         if os.path.isdir(d):
             roots.append(d)
     _DIR_ROOTS_ACTUAL = roots
     return roots
 
-
 def _rebuild_dir_file_list() -> None:
     """
-    /data 配下の対象ファイル（テキスト拡張子のみ）一覧を再構築してキャッシュ。
+    データルート配下の「テキスト拡張子のファイル」を一覧化してキャッシュに格納。
     """
     global _DIR_FILE_LIST, _DIR_FILE_LIST_STAMP
 
     roots = _refresh_dir_roots()
     files: list[str] = []
-    total = 0
+    scanned = 0
 
     for root in roots:
         for cur, _dirs, names in os.walk(root):
-            # 過剰スキャン防止
-            if total >= MAX_FILES_SCANNED:
+            if scanned >= MAX_FILES_SCANNED:
                 break
             for nm in names:
-                if total >= MAX_FILES_SCANNED:
+                if scanned >= MAX_FILES_SCANNED:
                     break
                 path = os.path.join(cur, nm)
+                scanned += 1
                 if _is_text_ext(path):
                     files.append(path)
-                total += 1
 
     _DIR_FILE_LIST = files
     _DIR_FILE_LIST_STAMP = time.time()
-    if not roots:
-        sys.stderr.write("[INDEX] WARNING: /data が存在しません。インデックスは空です。\n")
-    sys.stderr.write(f"[INDEX] files={len(files)} roots={len(roots)} stamp={_DIR_FILE_LIST_STAMP}\n")
 
+    if not roots:
+        # 候補を列挙した上で警告（ユーザーの状況把握を助ける）
+        sys.stderr.write("[INDEX] WARNING: データフォルダが見つかりません。候補:\n")
+        sys.stderr.write(f"  - DATA_ROOT={ENV_DATA_ROOT or '(未設定)'}\n")
+        sys.stderr.write(f"  - {PROJ_DATA_ROOT}\n")
+        sys.stderr.write(f"  - {ABS_DATA_ROOT}\n")
+    else:
+        sys.stderr.write(f"[INDEX] roots={roots}\n")
+    sys.stderr.write(f"[INDEX] files={len(files)} stamp={_DIR_FILE_LIST_STAMP}\n")
 
 def _ensure_dir_file_list_recent(force: bool = False) -> None:
     """キャッシュが古い/空なら再構築。force=True で強制再構築。"""
     if force or (time.time() - _DIR_FILE_LIST_STAMP > INDEX_REFRESH_SEC) or not _DIR_FILE_LIST:
         _rebuild_dir_file_list()
 
-
 def _search_in_file(file_path: str, query_lower: str, scope: str) -> Iterable[dict[str, Any]]:
     """
-    単一ファイルの検索。ファイル名一致 / 内容一致（テキストのみ）。
-    scope: "filename" | "content" | "both"
+    単一ファイルでの検索。
+      - scope: "filename" | "content" | "both"
     """
     rel = _normalize_relpath(file_path)
 
@@ -273,14 +283,13 @@ def _search_in_file(file_path: str, query_lower: str, scope: str) -> Iterable[di
             }
             return
 
-    # 内容一致（先頭 MAX_BYTES_PER_FILE バイト）
+    # 内容一致（先頭 MAX_BYTES_PER_FILE のみ読み取り）
     if scope in ("content", "both"):
         try:
             with open(file_path, "rb") as f:
                 b = f.read(MAX_BYTES_PER_FILE)
         except Exception:
             return
-
         text = _try_decode(b)
         idx = text.lower().find(query_lower)
         if idx >= 0:
@@ -298,9 +307,8 @@ def _search_in_file(file_path: str, query_lower: str, scope: str) -> Iterable[di
                 "value": value,
             }
 
-
 # =========================
-# 検索実体
+# 検索本体
 # =========================
 
 def perform_search(query: str,
@@ -310,22 +318,22 @@ def perform_search(query: str,
                    force_reindex: bool = False) -> dict[str, Any]:
     """
     総合検索関数。
-    - query: 検索語（大小無視）
-    - mode : "dir"(既定) | "zip" | "both" … いずれも /data 配下に限定
-    - scope: "filename" | "content" | "both"
-    - max_hits: 返却上限
-    - force_reindex: ディレクトリインデックスの強制再構築
+      - query: 検索語（大小無視）
+      - mode : "dir"(既定) | "zip" | "both"  ※いずれも「データルート配下」に限定
+      - scope: "filename" | "content" | "both"
+      - max_hits: 返却上限
+      - force_reindex: ディレクトリファイル一覧の強制再構築
     """
     t0 = time.time()
-    query = (query or "").strip()
-    if not query:
-        return {"ok": False, "error": "empty_query", "message": "検索語が空です。何か入力してください。"}
+    q = (query or "").strip()
+    if not q:
+        return {"ok": False, "error": "empty_query", "message": "検索語が空です。"}
 
-    ql = query.lower()
+    ql = q.lower()
     hits: list[dict[str, Any]] = []
     scanned_zip_count = 0
 
-    # /data ディレクトリ検索
+    # 1) ディレクトリ検索
     if mode in ("dir", "both"):
         _ensure_dir_file_list_recent(force=force_reindex)
         for fp in _DIR_FILE_LIST:
@@ -336,10 +344,9 @@ def perform_search(query: str,
             if len(hits) >= max_hits:
                 break
 
-    # /data 配下のZIP検索
+    # 2) ZIP検索（任意）
     if len(hits) < max_hits and mode in ("zip", "both"):
-        zip_paths = _discover_zip_paths()
-        for zp in zip_paths:
+        for zp in _discover_zip_paths():
             for h in _search_in_zip(zp, ql, scope=scope, limit_hits=max_hits):
                 hits.append(h)
                 if len(hits) >= max_hits:
@@ -351,7 +358,7 @@ def perform_search(query: str,
     dt = time.time() - t0
     return {
         "ok": True,
-        "query": query,
+        "query": q,
         "hits": hits,
         "stats": {
             "mode": mode,
@@ -360,10 +367,9 @@ def perform_search(query: str,
             "zip_files_considered": scanned_zip_count if mode in ("zip", "both") else 0,
             "elapsed_sec": round(dt, 3),
             "truncated": len(hits) >= max_hits,
-            "search_root": "/data",
+            "roots": _DIR_ROOTS_ACTUAL,
         }
     }
-
 
 # =========================
 # HTTP ハンドラ
@@ -371,21 +377,27 @@ def perform_search(query: str,
 
 class IndexFileHandler(SimpleHTTPRequestHandler):
     """
-    ルーティング:
-      - /api/search : 検索API（/data 限定）
-      - /api/reindex: ディレクトリファイル一覧を再構築
-      - /api/ping   : ヘルスチェック
-      - /, /index.html : /input.html に振替
-      - その他: view/ 配下を静的配信
+    役割:
+      - /api/search   : 検索API（GET/POST）
+      - /api/reindex  : インデックス再構築（GET/POST）
+      - /api/ping     : 生存確認
+      - /, /index.html: input.html にルーティング
+      - それ以外      : view/ 配下の静的配信
+
+    備考:
+      - CORS対応（同一オリジンでも付けておくとトラブル回避しやすい）
+      - do_OPTIONS も実装し、プリフライト要求にも 204 で応答（501回避）
     """
 
+    # ---- GET ---------------------------------------------------------
     def do_GET(self):
         parsed = urlparse(self.path)
 
         if parsed.path == "/api/search":
-            return self.handle_api_search(parsed)
+            return self._handle_api_search(parsed)
         if parsed.path == "/api/reindex":
-            return self.handle_api_reindex()
+            _rebuild_dir_file_list()
+            return self._send_json({"ok": True, "reindexed": True, "files": len(_DIR_FILE_LIST), "roots": _DIR_ROOTS_ACTUAL})
         if parsed.path == "/api/ping":
             return self._send_json({"ok": True, "pong": True})
 
@@ -393,29 +405,75 @@ class IndexFileHandler(SimpleHTTPRequestHandler):
             self.path = "/input.html"
         return super().do_GET()
 
-    # --- /api/search ---
-    def handle_api_search(self, parsed):
+    # ---- POST --------------------------------------------------------
+    def do_POST(self):
+        parsed = urlparse(self.path)
+
+        if parsed.path == "/api/search":
+            length = int(self.headers.get("Content-Length") or "0")
+            raw = self.rfile.read(length) if length > 0 else b""
+            ctype = (self.headers.get("Content-Type") or "").lower()
+
+            # 既定値
+            q = ""
+            mode = "dir"
+            scope = "both"
+            limit = MAX_HITS_RETURNED
+            force = False
+
+            try:
+                if "application/json" in ctype:
+                    obj = json.loads(raw.decode("utf-8", errors="ignore") or "{}")
+                    q = str(obj.get("q") or "").strip()
+                    mode = (obj.get("mode") or "dir").lower()
+                    scope = (obj.get("scope") or "both").lower()
+                    limit = max(1, min(int(obj.get("limit") or MAX_HITS_RETURNED), MAX_HITS_RETURNED))
+                    force = bool(obj.get("force") or False)
+                else:
+                    # x-www-form-urlencoded
+                    qs = parse_qs(raw.decode("utf-8", errors="ignore"))
+                    q = (qs.get("q", [""])[0] or "").strip()
+                    mode = (qs.get("mode", ["dir"])[0] or "dir").lower()
+                    scope = (qs.get("scope", ["both"])[0] or "both").lower()
+                    limit = max(1, min(int(qs.get("limit", [str(MAX_HITS_RETURNED)])[0]), MAX_HITS_RETURNED))
+                    force = (qs.get("force", ["false"])[0] or "false").lower() in ("1", "true", "yes")
+            except Exception as e:
+                return self._send_json({"ok": False, "error": "bad_request", "message": f"parse error: {e}"}, status=400)
+
+            result = perform_search(q, mode=mode, scope=scope, max_hits=limit, force_reindex=force)
+            return self._send_json(result)
+
+        if parsed.path == "/api/reindex":
+            _rebuild_dir_file_list()
+            return self._send_json({"ok": True, "reindexed": True, "files": len(_DIR_FILE_LIST), "roots": _DIR_ROOTS_ACTUAL})
+
+        return self._send_json({"ok": False, "error": "not_found"}, status=404)
+
+    # ---- OPTIONS（CORS プリフライト） -------------------------------
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "content-type")
+        self.end_headers()
+
+    # ---- 内部: /api/search(GET) ------------------------------------
+    def _handle_api_search(self, parsed):
         qs = parse_qs(parsed.query)
         q = unquote((qs.get("q", [""])[0] or "").strip())
-        mode = (qs.get("mode", ["dir"])[0] or "dir").lower()       # 既定: dir（/data ディレクトリ）
-        scope = (qs.get("scope", ["both"])[0] or "both").lower()   # 既定: both
+        mode = (qs.get("mode", ["dir"])[0] or "dir").lower()
+        scope = (qs.get("scope", ["both"])[0] or "both").lower()
         limit_s = (qs.get("limit", [str(MAX_HITS_RETURNED)])[0] or str(MAX_HITS_RETURNED))
         try:
             limit = max(1, min(int(limit_s), MAX_HITS_RETURNED))
         except Exception:
             limit = MAX_HITS_RETURNED
-
         force = (qs.get("force", ["false"])[0] or "false").lower() in ("1", "true", "yes")
 
         result = perform_search(q, mode=mode, scope=scope, max_hits=limit, force_reindex=force)
         return self._send_json(result)
 
-    # --- /api/reindex ---
-    def handle_api_reindex(self):
-        _rebuild_dir_file_list()
-        return self._send_json({"ok": True, "reindexed": True, "files": len(_DIR_FILE_LIST), "root": "/data"})
-
-    # --- JSONユーティリティ ---
+    # ---- 内部: JSON 応答ユーティリティ -----------------------------
     def _send_json(self, data: Dict[str, Any], status: int = 200):
         try:
             body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
@@ -424,23 +482,40 @@ class IndexFileHandler(SimpleHTTPRequestHandler):
             body = json.dumps({"ok": False, "error": "json_dump_failed", "message": str(e)}).encode("utf-8")
 
         self.send_response(status)
+        # CORS（同一オリジンでも付与しておく）
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "content-type")
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
+    # ログ出力（SimpleHTTPRequestHandlerの書式を踏襲）
     def log_message(self, fmt, *args):
         sys.stderr.write("[HTTP] " + fmt % args + "\n")
 
-
 # =========================
-# サーバ起動
+# サーバ起動系
 # =========================
 
-def find_free_server():
-    """空きポートを見つけて HTTP サーバを生成。"""
-    last_error: Exception | None = None
+def _prepare_on_boot():
+    """起動前準備: view/ 存在チェック、data/ 作成、インデックス構築"""
+    if not os.path.isdir(VIEW_DIR):
+        print(f"[ERROR] view ディレクトリが見つかりません: {VIEW_DIR}")
+        sys.exit(1)
+
+    # 既定の <プロジェクト>/data が無ければ空で作成（ユーザーに優しい挙動）
+    if not os.path.isdir(PROJ_DATA_ROOT):
+        with contextlib.suppress(Exception):
+            os.makedirs(PROJ_DATA_ROOT, exist_ok=True)
+
+    _rebuild_dir_file_list()  # 初期インデックス
+
+def _find_free_server():
+    """空きポートを見つけて HTTP サーバを返す。"""
+    last_error = None
     for port in PORT_CANDIDATES:
         try:
             handler = partial(IndexFileHandler, directory=VIEW_DIR)
@@ -451,21 +526,10 @@ def find_free_server():
             continue
     raise OSError(f"Failed to bind any of ports {PORT_CANDIDATES}: {last_error!r}")
 
-
 def main():
-    # 起動時に /data のインデックスを構築
-    _rebuild_dir_file_list()
+    _prepare_on_boot()
 
-    if not os.path.isdir(VIEW_DIR):
-        print(f"[ERROR] view フォルダが見つかりません: {VIEW_DIR}")
-        sys.exit(1)
-
-    for name in ("input.html", "app.js", "style.css"):
-        path = os.path.join(VIEW_DIR, name)
-        if not os.path.isfile(path):
-            print(f"[WARN] {name} が見つかりません: {path}")
-
-    httpd, port = find_free_server()
+    httpd, port = _find_free_server()
     url = f"http://{HOST}:{port}/"
 
     print("====================================")
@@ -473,10 +537,11 @@ def main():
     print("====================================")
     print(f" Project : {BASE_DIR}")
     print(f" Serve   : {VIEW_DIR}  ( / → input.html )")
-    print(f" URL     : {url}")
-    print(" Search  : Root = /data")
-    print(" API     : GET /api/search?q=キーワード&mode=dir|zip|both&scope=filename|content|both")
-    print("          GET /api/reindex  ( /data のファイル一覧を再構築 )")
+    print(f" Roots   : {_DIR_ROOTS_ACTUAL or ['(not found)']}")
+    print(" API     : GET /api/search?q=...&mode=dir|zip|both&scope=filename|content|both&limit=N")
+    print("           POST /api/search (JSON or form: q,mode,scope,limit,force)")
+    print("           GET/POST /api/reindex")
+    print(" Tips    : 既定では <プロジェクト>/data を検索します。DATA_ROOT で上書き可能。")
     print(" Stop    : Ctrl + C")
     print("====================================")
 
@@ -490,7 +555,6 @@ def main():
     finally:
         with contextlib.suppress(Exception):
             httpd.server_close()
-
 
 if __name__ == "__main__":
     main()
