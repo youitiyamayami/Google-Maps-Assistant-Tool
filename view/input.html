@@ -18,14 +18,13 @@
       <form id="departure-form" action="#" onsubmit="return false;">
         <label class="visually-hidden" for="departure-input">駅・地名キーワード</label>
         <input id="departure-input" type="text" placeholder="例）新宿 / しんじゅく / Shinjuku" autocomplete="off" />
-        <!-- ★ ユーザーのイメージに合わせた「押す (= 検索)」ボタン -->
         <button id="departure-search" data-role="search" type="button">検索</button>
       </form>
 
       <p class="selection-preview" id="departure-selected" aria-live="polite"></p>
     </section>
 
-    <!-- （将来用）到着地 -->
+    <!-- Arrive ブロック -->
     <section id="Arrive" aria-labelledby="arrive-label">
       <h2 id="arrive-label">到着地を入力してください</h2>
       <form id="arrive-form" action="#" onsubmit="return false;">
@@ -36,7 +35,7 @@
       <p class="selection-preview" id="arrive-selected" aria-live="polite"></p>
     </section>
 
-    <!-- ★ ポップアップ（ユーザー提示イメージの #box #close に合わせた構造） -->
+    <!-- ポップアップ（#box / #close） -->
     <div id="box" aria-hidden="true">
       <button id="close" class="popup-close" aria-label="閉じる">×</button>
       <h2 class="popup-title">ポップアップ</h2>

@@ -22,7 +22,7 @@
   --bg-button: #f3f3f3;
   --page-bg: #f4f4f4;
   --board-bg: #ffffff;
-  --shadow: 0 10px 30px rgba(0,0,0,.08);
+  --shadow: 0 10px 30px rgba(0,0,0,08);
   --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans JP', sans-serif;
 }
 
@@ -207,7 +207,6 @@ body{
 .result-item:focus{
   outline-offset: 2px;
 }
-
 .result-item .title{
   font-weight: 600;
   margin-bottom: 4px;
