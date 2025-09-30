@@ -2,49 +2,130 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>ルート検索（出発地 / 到着地）</title>
+  <title>公共交通ルート検索（中間地点・Leg1保存対応 / スクロール対応）</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
   <main id="app">
-    <h1>入力画面</h1>
+    <h1>公共交通ルート検索（中間地点・Leg1保存対応）</h1>
 
-    <!-- Departure ブロック: 既存IDを踏襲 -->
+    <!-- 出発地 -->
     <section id="Departure" aria-labelledby="departure-label">
-      <h2 id="departure-label">出発地を入力してください</h2>
-
-      <!-- フォーム。Enterで送信しても遷移しない -->
+      <h2 id="departure-label">出発地</h2>
       <form id="departure-form" action="#" onsubmit="return false;">
-        <label class="visually-hidden" for="departure-input">駅・地名キーワード</label>
-        <input id="departure-input" type="text" placeholder="例）新宿 / しんじゅく / Shinjuku" autocomplete="off" />
+        <label class="visually-hidden" for="departure-input">出発地（駅名・地名）</label>
+        <input id="departure-input" type="text" placeholder="例）新宿 / Shinjuku" autocomplete="off" />
         <button id="departure-search" data-role="search" type="button">検索</button>
       </form>
-
       <p class="selection-preview" id="departure-selected" aria-live="polite"></p>
     </section>
 
-    <!-- Arrive ブロック -->
+    <!-- 中間地点（1か所） -->
+    <section id="Waypoint" aria-labelledby="waypoint-label">
+      <h2 id="waypoint-label">中間地点（任意・1か所）</h2>
+      <form id="waypoint-form" action="#" onsubmit="return false;">
+        <label class="visually-hidden" for="waypoint-input">中間地点（駅名・地名）</label>
+        <input id="waypoint-input" type="text" placeholder="例）名古屋 / Nagoya" autocomplete="off" />
+        <button id="waypoint-search" type="button">検索</button>
+      </form>
+      <p class="selection-preview" id="waypoint-selected" aria-live="polite"></p>
+    </section>
+
+    <!-- 到着地 -->
     <section id="Arrive" aria-labelledby="arrive-label">
-      <h2 id="arrive-label">到着地を入力してください</h2>
+      <h2 id="arrive-label">到着地</h2>
       <form id="arrive-form" action="#" onsubmit="return false;">
-        <label class="visually-hidden" for="arrive-input">駅・地名キーワード</label>
-        <input id="arrive-input" type="text" placeholder="例）大阪 / おおさか / Osaka" autocomplete="off" />
+        <label class="visually-hidden" for="arrive-input">到着地（駅名・地名）</label>
+        <input id="arrive-input" type="text" placeholder="例）大阪 / Osaka" autocomplete="off" />
         <button id="arrive-search" type="button">検索</button>
       </form>
       <p class="selection-preview" id="arrive-selected" aria-live="polite"></p>
     </section>
 
-    <!-- ポップアップ（#box / #close） -->
+    <!-- オプション（出発日時のみ） -->
+    <section id="Options" aria-labelledby="options-label">
+      <h2 id="options-label">オプション</h2>
+      <div class="options-grid">
+        <div class="field">
+          <label for="depart-date">出発日</label>
+          <input id="depart-date" type="date" />
+        </div>
+        <div class="field">
+          <label for="depart-time">出発時刻</label>
+          <input id="depart-time" type="time" />
+        </div>
+      </div>
+    </section>
+
+    <!-- 実行 -->
+    <section id="Actions" aria-labelledby="actions-label">
+      <h2 id="actions-label">実行</h2>
+      <div class="action-row">
+        <!-- 出発→到着（既存） -->
+        <button id="do-search" class="btn btn-primary btn-lg" type="button" disabled>
+          経路を検索（出発→到着）
+        </button>
+
+        <!-- 出発→中間（新規） -->
+        <button id="do-search-leg1" class="btn btn-lg" type="button" disabled>
+          中間地点まで検索（出発→中間）
+        </button>
+
+        <!-- URL保存（既存: 出発→到着） -->
+        <button id="save-url" class="btn btn-lg" type="button" disabled>
+          URLを保存（出発→到着）
+        </button>
+
+        <!-- URL保存（新規: 出発→中間） -->
+        <button id="save-url-leg1" class="btn btn-lg" type="button" disabled>
+          中間URLを保存（出発→中間）
+        </button>
+
+        <span id="action-msg" class="note" aria-live="polite">
+          出発地と到着地を入力/選択してください。中間地点を設定すると「中間地点まで検索／保存」も有効になります。
+        </span>
+      </div>
+
+      <!-- 出発→到着 URLプレビュー -->
+      <div class="url-preview-row">
+        <label for="url-preview">組み立てURLプレビュー（出発→到着）</label>
+        <div class="url-preview">
+          <input id="url-preview" type="text" readonly />
+          <button id="copy-url" class="btn" type="button" disabled>コピー</button>
+        </div>
+      </div>
+
+      <!-- 出発→中間 URLプレビュー -->
+      <div class="url-preview-row" id="leg1-preview-row">
+        <label for="url-preview-leg1">組み立てURLプレビュー（出発→中間）</label>
+        <div class="url-preview">
+          <input id="url-preview-leg1" type="text" readonly />
+          <button id="copy-url-leg1" class="btn" type="button" disabled>コピー</button>
+        </div>
+      </div>
+
+      <!-- 保存結果（共通） -->
+      <div class="save-result-row">
+        <label for="save-result">保存結果（出発→到着）</label>
+        <textarea id="save-result" rows="3" readonly placeholder="保存後、ここに保存先パス等が表示されます。"></textarea>
+      </div>
+
+      <div class="save-result-row">
+        <label for="save-result-leg1">保存結果（出発→中間）</label>
+        <textarea id="save-result-leg1" rows="3" readonly placeholder="保存後、ここに保存先パス等が表示されます。"></textarea>
+      </div>
+    </section>
+
+    <!-- 候補ポップアップ -->
     <div id="box" aria-hidden="true">
       <button id="close" class="popup-close" aria-label="閉じる">×</button>
-      <h2 class="popup-title">ポップアップ</h2>
+      <h2 class="popup-title">候補を選択してください</h2>
       <div id="search-summary" class="search-summary"></div>
       <ul id="search-results" class="search-results" aria-label="検索候補一覧"></ul>
     </div>
   </main>
 
-  <!-- 挙動は app.js に集約 -->
   <script src="./app.js"></script>
 </body>
 </html>

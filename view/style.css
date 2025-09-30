@@ -1,228 +1,187 @@
-/* style.css
+/* =========================================
+ * style.css（スクロール対応版）
  * 目的:
- *   - 既存レイアウトを維持しつつ、ユーザー提示の #box / #close 方式でポップアップを実装。
- *   - #box は初期 display:none、ボタン押下で display:block に切り替える。
- *   - 検索結果が読みやすいようにサイズ/スクロール/カード風スタイルを付与。
- */
+ *  - 固定サイズ/絶対配置を撤廃し、内容に応じて伸縮・スクロール可能にする
+ *  - 既存の UI/機能は維持（ID/DOM 構造は変更しない）
+ * ========================================= */
 
-/* ------- ベース ------- */
-
+/* ベーステーマ変数 */
 :root{
-  --top-dep: 5%;
-  --top-arr: 15%;
-  --row-left: 5%;
-  --row-width: 90%;
-  --w-input-col: 65%;
-  --w-button-col: 20%;
-  --h-control: 56px;
-  --gap-inline: 12px;
-  --h2-bottom: 8px;
+  --h-control: 52px;
+  --gap: 12px;
   --radius: 8px;
   --border: 1px solid #ccc;
-  --bg-button: #f3f3f3;
-  --page-bg: #f4f4f4;
-  --board-bg: #ffffff;
-  --shadow: 0 10px 30px rgba(0,0,0,08);
+  --bg: #f5f7fb;
+  --panel: #fff;
+  --shadow: 0 10px 30px rgba(0,0,0,0.08);
   --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans JP', sans-serif;
+
+  /* レイアウト */
+  --page-max-width: 960px;
+  --page-padding: 20px;
 }
 
-* { box-sizing: border-box; }
-html, body { margin: 0; }
-html {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background: var(--page-bg);
+*{ box-sizing: border-box; }
+
+/* ページ全体をスクロール可能に */
+html{
+  min-height: 100%;
+  background: var(--bg);
+  scroll-behavior: smooth;
 }
 body{
-  width: 1080px;
-  height: 1920px;
-  position: relative;
-  background: var(--board-bg);
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font);
+  color: #111;
+  /* ← 固定幅/高さ・overflow:hidden を削除して縦スクロール可能に */
+}
+
+/* コンテナ: 中央寄せ + パネル表示（可変高さ） */
+#app{
+  width: 100%;
+  max-width: var(--page-max-width);
+  margin: 24px auto;
+  padding: var(--page-padding);
+  background: var(--panel);
   border: var(--border);
   border-radius: 12px;
   box-shadow: var(--shadow);
-  font-family: var(--font);
-  overflow: hidden;
 }
 
+/* 見出し */
+h1{ margin: 0 0 16px; font-size: 20px; }
+h2{ margin: 0 0 6px; font-size: 18px; }
+
+/* アクセシビリティ用隠しラベル */
 .visually-hidden{
-  position: absolute !important;
-  height: 1px;
-  width: 1px;
-  overflow: hidden;
-  clip: rect(1px, 1px, 1px, 1px);
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
-  padding: 0;
-  margin: -1px;
+  position: absolute !important; height: 1px; width: 1px; overflow: hidden;
+  clip: rect(1px, 1px, 1px, 1px); clip-path: inset(50%); white-space: nowrap;
+  border: 0; padding: 0; margin: -1px;
 }
 
-/* ------- 入力行 ------- */
-
-#Departure, #Arrive{
-  position: absolute;
-  left: var(--row-left);
-  width: var(--row-width);
+/* セクション: 通常フローで縦並び（絶対配置を廃止） */
+#Departure, #Waypoint, #Arrive, #Options, #Actions{
+  position: static;           /* ← 以前の absolute を撤廃 */
+  width: auto;
   display: grid;
-  grid-template-columns: var(--w-input-col) var(--w-button-col);
-  grid-auto-rows: auto;
-  column-gap: var(--gap-inline);
+  grid-template-columns: 1fr;
+  row-gap: 8px;
+  margin-top: 16px;           /* セクション間の余白 */
 }
 
-#Departure{ top: var(--top-dep); }
-#Arrive{    top: var(--top-arr); }
-
-#Departure > h2,
-#Arrive > h2{
-  grid-column: 1 / -1;
-  margin: 0 0 var(--h2-bottom);
-  font-size: 18px;
-}
-
-#Departure > form,
-#Arrive    > form{
-  grid-column: 1 / -1;
-  margin: 0;
-  width: 100%;
+/* 入力行（フォームで2カラム） */
+#Departure form, #Waypoint form, #Arrive form{
   display: grid;
-  grid-template-columns: var(--w-input-col) var(--w-button-col);
-  column-gap: var(--gap-inline);
+  grid-template-columns: 1fr 160px;
+  column-gap: var(--gap);
 }
-
-#Departure form > input[type="text"],
-#Arrive    form > input[type="text"]{
-  grid-column: 1;
-  width: 100%;
+#Departure input[type="text"],
+#Waypoint  input[type="text"],
+#Arrive    input[type="text"]{
   height: var(--h-control);
   border: var(--border);
   border-radius: var(--radius);
   padding: 0 12px;
   font-size: 16px;
-  line-height: 1.2;
-  outline: none;
-}
-
-#Departure form > button,
-#Arrive    form > button{
-  grid-column: 2;
   width: 100%;
+}
+#Departure button, #Waypoint button, #Arrive button{
   height: var(--h-control);
   border: var(--border);
   border-radius: var(--radius);
-  background: var(--bg-button);
-  font-size: 16px;
+  background: #f3f3f3;
   cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 12px;
+}
+.selection-preview{ margin: 0; font-size: 12px; color: #333; }
+
+/* オプション */
+.options-grid{
+  display: grid;
+  grid-template-columns: 220px 180px;
+  column-gap: var(--gap);
+  align-items: end;
+}
+.field label{ display: block; font-size: 12px; color: #444; margin-bottom: 4px; }
+.field input[type="date"], .field input[type="time"]{
+  height: var(--h-control); border: var(--border); border-radius: var(--radius);
+  padding: 0 10px; font-size: 14px;
 }
 
-/* ------- ユーザー提示イメージの #box / #close に合わせたポップアップ ------- */
+/* 実行行 */
+.action-row{ display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.note{ font-size: 12px; color: #666; }
 
-#box {
-  /* 初期非表示（JSで display:block に切り替え） */
-  display: none;
+/* URLプレビュー（共通） */
+.url-preview-row{ margin-top: 12px; display: grid; row-gap: 6px; }
+.url-preview-row label{ font-size: 12px; color: #444; }
+.url-preview{
+  display: grid;
+  grid-template-columns: 1fr 120px;
+  column-gap: var(--gap);
+}
+#url-preview, #url-preview-leg1{
+  height: var(--h-control); border: var(--border); border-radius: var(--radius);
+  padding: 0 10px; font-size: 14px; width: 100%;
+}
 
-  /* 位置とサイズ（ユーザーのイメージを尊重しつつ、結果を読みやすく拡張） */
-  position: fixed;
-  top: 8%;
+/* 保存結果 */
+.save-result-row{ margin-top: 10px; display: grid; row-gap: 6px; }
+.save-result-row label{ font-size: 12px; color: #444; }
+#save-result, #save-result-leg1{
+  width: 100%; min-height: 92px; resize: vertical;
+  border: var(--border); border-radius: var(--radius); padding: 8px 10px; font-size: 13px;
+  background: #fafafa;
+}
+
+/* ボタン */
+.btn{
+  display: inline-flex; align-items: center; justify-content: center;
+  text-decoration: none; border: var(--border); border-radius: var(--radius);
+  padding: 0 20px; height: var(--h-control); cursor: pointer; user-select: none;
+}
+.btn-lg{ height: calc(var(--h-control) + 6px); padding: 0 24px; font-size: 16px; }
+.btn-primary{ background: #0b57d0; color: #fff; border-color: #0b57d0; }
+.btn:hover{ filter: brightness(1.03); }
+.btn:active{ transform: translateY(1px); }
+button[disabled]{ opacity: 0.55; cursor: not-allowed; }
+
+/* 候補ポップアップ: 画面スクロールに追従するよう fixed に */
+#box{
+  position: fixed;           /* ← absolute から fixed に変更 */
   left: 50%;
+  top: 10%;
   transform: translateX(-50%);
-  width: 640px;
-  max-height: 72vh;
-
-  /* 外観 */
-  background: #fff;
-  border: 1px solid #333;
-  box-shadow: 0 10px 10px #999;
-  border-radius: 10px;
-  padding: 16px 16px 12px;
-
-  /* スクロール領域 */
-  overflow: auto;
-
-  /* アクセシビリティヒント（視覚上の分かりやすさ） */
-  z-index: 9999;
-  text-align: left;
-  font-family: serif;
+  width: min(720px, 90vw);
+  max-height: 80vh;          /* ビューポート基準でスクロール可 */
+  background: #fff; border: 1px solid #333; box-shadow: 0 10px 10px #999;
+  border-radius: 10px; padding: 16px 16px 12px; overflow: auto; z-index: 9999;
+  display: none; text-align: left; font-family: serif;
 }
-
-/* 閉じるボタン（右上の ×） */
-#close {
-  position: absolute;
-  right: 8px;
-  top: 8px;
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: 6px;
-  background-color: #EEE;
-  color: #333;
-  cursor: pointer;
-  line-height: 32px;
-  text-align: center;
-  font-size: 18px;
+#close{
+  position: sticky;          /* スクロールしても右上に残る */
+  float: right;
+  top: 0; right: 0;
+  width: 32px; height: 32px;
+  border: 0; border-radius: 6px; background-color: #EEE; color: #333; cursor: pointer;
 }
-#close:hover {
-  background-color: #F9F9F9;
-  color: #999;
-}
-
-.popup-title{
-  margin: 0 0 8px;
-  font-size: 18px;
-}
-
-/* 検索サマリとリスト */
-.search-summary{
-  margin: 0 0 8px;
-  font-size: 14px;
-  color: #444;
-}
-
-.search-results{
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 8px;
-}
-
-/* 結果アイテム（カード風） */
+.popup-title{ margin: 0 0 8px; font-size: 16px; }
+.search-summary{ font-size: 12px; color: #333; margin-bottom: 6px; }
+.search-results{ list-style: none; margin: 0; padding: 0; }
 .result-item{
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  padding: 10px 12px;
-  cursor: pointer;
-  background: #fff;
+  display: grid; grid-template-columns: 1fr; row-gap: 4px;
+  border-bottom: 1px dashed #ccc; padding: 8px 4px; cursor: pointer;
 }
-.result-item:hover,
-.result-item:focus{
-  outline: 2px solid #2684ff33;
-  background: #fafcff;
-}
-.result-item:focus{
-  outline-offset: 2px;
-}
-.result-item .title{
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-.result-item .snippet{
-  font-size: 12px;
-  color: #333;
-  margin-bottom: 6px;
-}
-.result-item .meta{
-  font-size: 12px;
-  color: #666;
-}
+.result-item:focus, .result-item:hover{ background: #f7f7f7; }
+.result-item .title{ font-weight: 700; }
+.result-item .snippet{ font-size: 12px; color: #444; }
+.result-item .meta{ font-size: 12px; color: #666; }
+.no-results, .loading{ padding: 16px; color: #666; }
 
-.no-results,
-.loading{
-  padding: 16px;
-  color: #666;
+/* モバイル～狭幅調整 */
+@media (max-width: 680px){
+  .options-grid{ grid-template-columns: 1fr; row-gap: var(--gap); }
+  #Departure form, #Waypoint form, #Arrive form{
+    grid-template-columns: 1fr; row-gap: var(--gap);
+  }
 }
